@@ -182,17 +182,25 @@ class Client:
         """All commit maps from ``start_index`` to the head.
 
         Returns ``(commits, head_index)`` where each commit is one
-        ``{uuid: {"t":…,"e":…,"p":…}, …}`` map. Pagination advances via the
-        server's ``current-item-index`` — computing it client-side from item
-        counts triggers HTTP 500s (per things-cloud-sdk bug 7).
+        ``{uuid: {"t":…,"e":…,"p":…}, …}`` map.
+
+        Pagination: pages are size-limited (~200 KB), and the next page's
+        ``start-index`` is this page's start plus its item count. The
+        response's ``current-item-index`` is the journal HEAD, not a
+        continuation cursor — using it as one skips everything between the
+        first page and the head (that bug shipped, and silently dropped
+        every deletion outside page one until 2026-07-30). Done when
+        ``end-total-content-size`` reaches ``latest-total-content-size``.
         """
         commits: list[dict[str, Any]] = []
+        cursor = start_index
         head = start_index
         for _ in range(10_000):  # backstop, never hit in practice
-            page = self.items_page(head)
+            page = self.items_page(cursor)
             items = page.get("items") or []
             commits.extend(items)
-            head = int(page.get("current-item-index") or head)
+            cursor += len(items)
+            head = int(page.get("current-item-index") or cursor)
             end = int(page.get("end-total-content-size") or 0)
             latest = int(page.get("latest-total-content-size") or 0)
             if end >= latest or not items:
