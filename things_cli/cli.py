@@ -627,6 +627,8 @@ def cmd_edit(args: SimpleNamespace) -> int:
         kind, uuid = state.resolve(args.id)
         if kind not in ("todo", "project"):
             raise SyncError(f"{args.id!r} is a {kind}; edit takes a todo or project")
+        if args.evening and args.no_evening:
+            raise SyncError("--evening and --no-evening are opposites; pass one")
         project_id, area_id, heading_id = _container(state, args)
         changes = sync.build_update(
             uuid,
@@ -639,7 +641,7 @@ def cmd_edit(args: SimpleNamespace) -> int:
             project_id=project_id if args.project is not None else UNSET,
             area_id=area_id if args.area is not None else UNSET,
             heading_id=heading_id if args.heading is not None else UNSET,
-            evening=True if args.evening else UNSET,
+            evening=(False if args.no_evening else True if args.evening else UNSET),
         )
         if len(changes[uuid]["p"]) <= 1:  # only the md stamp
             err_console.print(
@@ -654,6 +656,26 @@ def cmd_edit(args: SimpleNamespace) -> int:
         err_console.print(f"[bold red]error:[/bold red] {e}")
         return 1
     console.print(Text.assemble(("✎ edited ", "bold"), name))
+    return 0
+
+
+def cmd_reorder(args: SimpleNamespace) -> int:
+    """Pin the listed to-dos, in the order given, to the top of Today."""
+    state, client = cloud_state()
+    try:
+        refs = args.refs.split()
+        uuids = [state.require(ref, "todo") for ref in refs]
+        changes = sync.build_today_order(state, uuids)
+        if not changes:
+            console.print("[dim]already in order[/dim]")
+            return 0
+        if not _commit(state, client, changes, args):
+            return 0
+    except (SyncError, CloudError) as e:
+        err_console.print(f"[bold red]error:[/bold red] {e}")
+        return 1
+    console.print(Text.assemble(("⇅ reordered ", "bold"),
+                                " → ".join(state.title_of(u) for u in uuids)))
     return 0
 
 
@@ -960,9 +982,17 @@ COMMANDS: list[Command] = [
             Flag("--area", True, "move into area (--area= clears)", "REF"),
             Flag("--heading", True, "move under heading (--heading= clears)", "REF"),
             Flag("--evening", False, "move to This Evening"),
+            Flag("--no-evening", False, "move out of This Evening"),
             _DRY,
         ],
         [Arg("id", "id or unique id prefix")],
+    ),
+    Command(
+        "reorder",
+        "Pin todos to the top of Today, in the order given",
+        cmd_reorder,
+        [_DRY],
+        [Arg("refs", "ids or unique id prefixes, top first", variadic=True)],
     ),
     Command(
         "complete",

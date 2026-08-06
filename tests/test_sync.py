@@ -639,3 +639,57 @@ def test_delete_builds_a_delete_op():
     uuid = "VJ1edXTP9q3PmFDUuy8EQh"
     changes = sync.build_delete(uuid)
     assert changes[uuid]["t"] == sync.OP_DELETE
+
+
+# ---------- Today ordering ----------
+
+A = "PLdKAbg77nLG4Gmp1mWogY"
+B = "9yJMAjoSWJxgFk4WEFh4hd"
+C = "GCfdqSExpyRRKEMEVtr1RK"
+
+
+def today_task(uuid, title, ti, **extra):
+    ts = sync.day_ts(date.today())
+    return task(uuid, tt=title, st=1, sr=ts, tir=ts, ti=ti, **extra)
+
+
+def test_pinning_puts_the_listed_todos_on_top_in_order():
+    state = state_from(today_task(A, "first", 0), today_task(B, "second", 1),
+                       today_task(C, "third", 2))
+    changes = sync.build_today_order(state, [C, A])
+    # B is the only unpinned item, so the pinned pair lands just below its `ti`.
+    assert changes[C]["p"]["ti"] == -1
+    assert A not in changes  # already sits at 0, one above B — nothing to write
+    order = sorted([(-1, C), (0, A), (1, B)])
+    assert [u for _ti, u in order] == [C, A, B]
+
+
+def test_pinning_is_idempotent_once_the_order_holds():
+    state = state_from(today_task(A, "first", 0), today_task(B, "second", 1))
+    assert sync.build_today_order(state, [A, B]) == {}
+    assert sync.build_today_order(state, [A]) == {}
+
+
+def test_pinning_rejects_an_evening_todo():
+    state = state_from(today_task(A, "day", 0), today_task(B, "night", 1, sb=1))
+    with pytest.raises(sync.SyncError, match="This Evening"):
+        sync.build_today_order(state, [B])
+
+
+def test_pinning_rejects_something_not_in_today():
+    state = state_from(today_task(A, "day", 0), task(B, tt="Someday", st=2))
+    with pytest.raises(sync.SyncError, match="not in Today"):
+        sync.build_today_order(state, [B])
+
+
+def test_pinning_ignores_a_repeated_reference():
+    state = state_from(today_task(A, "first", 5), today_task(B, "second", 1))
+    changes = sync.build_today_order(state, [A, A])
+    assert changes[A]["p"]["ti"] == 0  # one slot below B, not two
+
+
+def test_explicit_non_evening_clears_the_bit():
+    assert sync.build_update(A, evening=False)[A]["p"]["sb"] == 0
+    # ...including alongside a move, where `apply_when` leaves `sb` alone.
+    assert sync.build_update(A, when="today", evening=False)[A]["p"]["sb"] == 0
+    assert "sb" not in sync.build_update(A, title="x")[A]["p"]

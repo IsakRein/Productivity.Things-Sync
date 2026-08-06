@@ -1233,6 +1233,7 @@ def build_update(
     status: Any = UNSET,
     trashed: Any = UNSET,
     evening: Any = UNSET,
+    today_index: Any = UNSET,
 ) -> dict[str, dict[str, Any]]:
     """Build a sparse update patch.
 
@@ -1271,8 +1272,14 @@ def build_update(
         or (area_id is not UNSET and area_id)
     ) and when is UNSET:
         props["st"] = StartBucket.ANYTIME.value
-    if evening is not UNSET and when is UNSET:
-        props["sb"] = 1 if evening else 0
+    # A dated move already set `sb` if it was an evening one (`apply_when`);
+    # an explicit non-evening clears the bit either way.
+    if evening is False:
+        props["sb"] = 0
+    elif evening is True and when is UNSET:
+        props["sb"] = 1
+    if today_index is not UNSET:
+        props["ti"] = int(today_index)
     if status is not UNSET:
         props["ss"] = _INT_BY_STATUS[status]
         props["sp"] = now_ts() if status != Status.OPEN else None
@@ -1296,6 +1303,48 @@ def build_delete_many(items: Iterable[tuple[str, str]]) -> dict[str, dict[str, A
     changes: dict[str, dict[str, Any]] = {}
     for uuid, entity in items:
         changes.update(build_delete(uuid, entity))
+    return changes
+
+
+def build_today_order(state: State, uuids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    """Pin ``uuids``, in that order, to the top of Today.
+
+    Today's order is the `ti` field (ascending, ties broken by `ix`), so
+    pinning is arithmetic: each listed to-do gets a `ti` below every other
+    Today item's, spaced one apart in the order given. Nothing else is
+    touched — the rest of the list keeps its order underneath.
+
+    Only the plain Today block counts. Things sorts This Evening below the
+    rest whatever `ti` says, so an evening to-do can't be pinned above one
+    that isn't, and asking for it is an error rather than a write that
+    wouldn't show.
+
+    Returns an empty patch when the order already holds, which makes this
+    safe to re-assert on a loop.
+    """
+    pinned = list(dict.fromkeys(uuids))
+    for uuid in pinned:
+        todo = state.todos.get(uuid)
+        if todo is None:
+            raise SyncError(f"{state.title_of(uuid)!r} is not a todo")
+        if todo.evening:
+            raise SyncError(f"{todo.title!r} is in This Evening, which always "
+                            "sorts below Today — it can't be pinned above it")
+
+    block = [t for t in state.today_list() if not t.evening]
+    ids = [t.id for t in block]
+    missing = [u for u in pinned if u not in set(ids)]
+    if missing:
+        raise SyncError(f"{state.title_of(missing[0])!r} is not in Today")
+    if ids[:len(pinned)] == pinned:
+        return {}
+
+    base = min([t.today_index for t in block if t.id not in set(pinned)], default=0)
+    changes: dict[str, dict[str, Any]] = {}
+    for i, uuid in enumerate(pinned):
+        want = base - (len(pinned) - i)
+        if state.todos[uuid].today_index != want:
+            changes.update(build_update(uuid, state.entity_of(uuid), today_index=want))
     return changes
 
 
