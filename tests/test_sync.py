@@ -670,10 +670,32 @@ def test_pinning_is_idempotent_once_the_order_holds():
     assert sync.build_today_order(state, [A]) == {}
 
 
-def test_pinning_rejects_an_evening_todo():
+def test_pinning_to_the_bottom_puts_them_last():
+    state = state_from(today_task(A, "first", 0), today_task(B, "second", 1),
+                       today_task(C, "third", 2))
+    changes = sync.build_today_order(state, [A, B], bottom=True)
+    assert changes[A]["p"]["ti"] == 3 and changes[B]["p"]["ti"] == 4
+    assert sync.build_today_order(state, [B, C], bottom=True) == {}
+
+
+def test_pinning_within_the_evening_block_ignores_the_rest_of_today():
+    state = state_from(today_task(A, "day", 0),
+                       today_task(B, "night", 1, sb=1), today_task(C, "dusk", 2, sb=1))
+    changes = sync.build_today_order(state, [B], bottom=True)
+    assert changes[B]["p"]["ti"] == 3  # past C, the other evening item — not past A
+    assert sync.build_today_order(state, [B]) == {}  # already tops its own block
+
+
+def test_pinning_refuses_to_mix_the_two_blocks():
     state = state_from(today_task(A, "day", 0), today_task(B, "night", 1, sb=1))
-    with pytest.raises(sync.SyncError, match="This Evening"):
-        sync.build_today_order(state, [B])
+    with pytest.raises(sync.SyncError, match="separately"):
+        sync.build_today_order(state, [A, B])
+
+
+def test_pinning_needs_something_to_pin():
+    state = state_from(today_task(A, "day", 0))
+    with pytest.raises(sync.SyncError, match="nothing to pin"):
+        sync.build_today_order(state, [])
 
 
 def test_pinning_rejects_something_not_in_today():

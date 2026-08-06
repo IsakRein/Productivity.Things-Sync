@@ -1306,43 +1306,50 @@ def build_delete_many(items: Iterable[tuple[str, str]]) -> dict[str, dict[str, A
     return changes
 
 
-def build_today_order(state: State, uuids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    """Pin ``uuids``, in that order, to the top of Today.
+def build_today_order(
+    state: State, uuids: Iterable[str], *, bottom: bool = False
+) -> dict[str, dict[str, Any]]:
+    """Pin ``uuids``, in that order, to the top of Today — or with
+    ``bottom``, to the end of it.
 
     Today's order is the `ti` field (ascending, ties broken by `ix`), so
-    pinning is arithmetic: each listed to-do gets a `ti` below every other
-    Today item's, spaced one apart in the order given. Nothing else is
-    touched — the rest of the list keeps its order underneath.
+    pinning is arithmetic: each listed to-do gets a `ti` beyond every other
+    item's, spaced one apart in the order given. Nothing else is touched —
+    the rest of the list keeps its order around them.
 
-    Only the plain Today block counts. Things sorts This Evening below the
-    rest whatever `ti` says, so an evening to-do can't be pinned above one
-    that isn't, and asking for it is an error rather than a write that
-    wouldn't show.
+    Today has two blocks: the plain one and This Evening, which Things
+    always sorts below whatever `ti` says. Each is ordered independently, so
+    the pin applies within the block the listed to-dos are in, and mixing
+    the two in one call is an error rather than a write that wouldn't show.
 
     Returns an empty patch when the order already holds, which makes this
     safe to re-assert on a loop.
     """
     pinned = list(dict.fromkeys(uuids))
+    if not pinned:
+        raise SyncError("nothing to pin")
     for uuid in pinned:
-        todo = state.todos.get(uuid)
-        if todo is None:
+        if uuid not in state.todos:
             raise SyncError(f"{state.title_of(uuid)!r} is not a todo")
-        if todo.evening:
-            raise SyncError(f"{todo.title!r} is in This Evening, which always "
-                            "sorts below Today — it can't be pinned above it")
+    groups = {state.todos[u].evening for u in pinned}
+    if len(groups) > 1:
+        raise SyncError("This Evening always sorts below the rest of Today — "
+                        "pin the two blocks separately")
 
-    block = [t for t in state.today_list() if not t.evening]
+    evening = groups.pop()
+    block = [t for t in state.today_list() if t.evening == evening]
     ids = [t.id for t in block]
     missing = [u for u in pinned if u not in set(ids)]
     if missing:
         raise SyncError(f"{state.title_of(missing[0])!r} is not in Today")
-    if ids[:len(pinned)] == pinned:
+    if (ids[-len(pinned):] if bottom else ids[:len(pinned)]) == pinned:
         return {}
 
-    base = min([t.today_index for t in block if t.id not in set(pinned)], default=0)
+    others = [t.today_index for t in block if t.id not in set(pinned)]
     changes: dict[str, dict[str, Any]] = {}
     for i, uuid in enumerate(pinned):
-        want = base - (len(pinned) - i)
+        want = (max(others, default=0) + 1 + i if bottom
+                else min(others, default=0) - (len(pinned) - i))
         if state.todos[uuid].today_index != want:
             changes.update(build_update(uuid, state.entity_of(uuid), today_index=want))
     return changes

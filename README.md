@@ -74,7 +74,7 @@ Writes:
 | `add <title>` | new todo (`--when`, `--deadline`, `--notes`, `--tags`, `--project`, `--area`, `--heading`, `--checklist`, `--evening`, `--repeat`, `--deadline-early`, `--reminder`) |
 | `add-project` / `add-area` | new containers |
 | `edit <id>` | change only the fields you pass |
-| `reorder <id...>` | pin todos to the top of Today, in the order given |
+| `reorder <id...>` | pin todos to the top of Today (`--bottom` for the end) |
 | `complete` / `cancel` / `reopen` `<id>` | status |
 | `delete <id> --yes` | remove |
 
@@ -107,20 +107,22 @@ it; both work on their own, or alongside a `--when`.
 
 Today is ordered by hand in the app. `reorder` sets that order from the
 command line, pinning the to-dos you list — in that order — above
-everything else in Today:
+everything else in Today, or with `--bottom` below it:
 
 ```bash
 things reorder a1b2c3d4 9f8e7d6c 5b4a3c2d
+things reorder 7c6b5a4d --bottom
 ```
 
 The references are space-separated, so they're ids (or id prefixes) rather
 than titles.
 
-It rewrites as little as possible and does nothing at all when the order
-already holds, so it's safe to re-assert on a loop (Atlas does exactly
-that every few minutes). This Evening always sorts below the rest of Today
-whatever the order says, so pinning an evening to-do is an error rather
-than a write that wouldn't show.
+Today has two blocks — the plain one and This Evening, which Things always
+sorts below whatever the order says. Each is ordered on its own, so a pin
+applies within the block its to-dos are in, and mixing the two in one call
+is an error. It rewrites as little as possible and does nothing at all when
+the order already holds, so it's safe to re-assert on a loop (Atlas does
+exactly that every few minutes).
 
 ### Repeats
 

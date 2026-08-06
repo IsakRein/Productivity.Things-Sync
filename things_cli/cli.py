@@ -660,12 +660,13 @@ def cmd_edit(args: SimpleNamespace) -> int:
 
 
 def cmd_reorder(args: SimpleNamespace) -> int:
-    """Pin the listed to-dos, in the order given, to the top of Today."""
+    """Pin the listed to-dos, in the order given, to the top of Today (or
+    with --bottom, to the end of it)."""
     state, client = cloud_state()
     try:
         refs = args.refs.split()
         uuids = [state.require(ref, "todo") for ref in refs]
-        changes = sync.build_today_order(state, uuids)
+        changes = sync.build_today_order(state, uuids, bottom=args.bottom)
         if not changes:
             console.print("[dim]already in order[/dim]")
             return 0
@@ -674,8 +675,10 @@ def cmd_reorder(args: SimpleNamespace) -> int:
     except (SyncError, CloudError) as e:
         err_console.print(f"[bold red]error:[/bold red] {e}")
         return 1
+    where = "to the end" if args.bottom else "on top"
     console.print(Text.assemble(("⇅ reordered ", "bold"),
-                                " → ".join(state.title_of(u) for u in uuids)))
+                                " → ".join(state.title_of(u) for u in uuids),
+                                (f" ({where})", "dim")))
     return 0
 
 
@@ -991,8 +994,11 @@ COMMANDS: list[Command] = [
         "reorder",
         "Pin todos to the top of Today, in the order given",
         cmd_reorder,
-        [_DRY],
-        [Arg("refs", "ids or unique id prefixes, top first", variadic=True)],
+        [
+            Flag("--bottom", False, "pin to the end of Today instead of the top"),
+            _DRY,
+        ],
+        [Arg("refs", "ids or unique id prefixes, in the order wanted", variadic=True)],
     ),
     Command(
         "complete",
